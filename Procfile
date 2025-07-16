@@ -1,0 +1,1 @@
+web: python secure_elevenlabs_mcp.py
