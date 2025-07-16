@@ -485,90 +485,127 @@ async def sse_endpoint(request: Request):
             logger.info(f"SSE Request Headers: {dict(request.headers)}")
             logger.info(f"SSE Request URL: {request.url}")
             
-            # Send MCP tools list in the exact format expected
-            # Try a simpler format that might match what ElevenLabs expects
-            tools_response = {
-                "tools": [
-                    {
-                        "name": "log_call",
-                        "description": "Log a completed call to FollowUp Boss CRM",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "caller_name": {
-                                    "type": "string",
-                                    "description": "Name of the caller"
-                                },
-                                "caller_phone": {
-                                    "type": "string", 
-                                    "description": "Phone number of the caller"
-                                },
-                                "transcript": {
-                                    "type": "string",
-                                    "description": "Full transcript of the call"
-                                },
-                                "call_duration": {
-                                    "type": "integer",
-                                    "description": "Duration of call in seconds"
-                                },
-                                "call_outcome": {
-                                    "type": "string",
-                                    "description": "Outcome of the call"
-                                },
-                                "call_summary": {
-                                    "type": "string",
-                                    "description": "Brief summary of the call"
-                                },
-                                "source": {
-                                    "type": "string",
-                                    "description": "Lead source (e.g. Standard mailer, Google, Texting)"
-                                },
-                                "site_county": {
-                                    "type": "string",
-                                    "description": "County where the property is located"
-                                },
-                                "site_state": {
-                                    "type": "string",
-                                    "description": "State where the property is located"
-                                },
-                                "reference_number": {
-                                    "type": "string",
-                                    "description": "Reference number for the property"
-                                },
-                                "acreage": {
-                                    "type": "string",
-                                    "description": "Acreage of the property"
-                                },
-                                "stage": {
-                                    "type": "string",
-                                    "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"],
-                                    "description": "Stage to assign the lead"
-                                }
-                            },
-                            "required": ["caller_name", "caller_phone"]
-                        }
+            # Send initial connection event
+            yield f"event: connected\ndata: {{\"status\": \"ready\"}}\n\n"
+            
+            # Send MCP initialization response
+            init_response = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "secure-followup-boss-mcp",
+                        "version": "1.0.0"
                     }
-                ]
+                }
+            }
+            yield f"event: initialize\ndata: {json.dumps(init_response)}\n\n"
+            
+            # Send tools list
+            tools_response = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "log_call",
+                            "description": "Log a completed call to FollowUp Boss CRM",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "caller_name": {
+                                        "type": "string",
+                                        "description": "Name of the caller"
+                                    },
+                                    "caller_phone": {
+                                        "type": "string",
+                                        "description": "Phone number of the caller"
+                                    },
+                                    "transcript": {
+                                        "type": "string",
+                                        "description": "Full transcript of the call"
+                                    },
+                                    "call_duration": {
+                                        "type": "integer",
+                                        "description": "Duration of call in seconds"
+                                    },
+                                    "call_outcome": {
+                                        "type": "string",
+                                        "description": "Outcome of the call"
+                                    },
+                                    "call_summary": {
+                                        "type": "string",
+                                        "description": "Brief summary of the call"
+                                    },
+                                    "source": {
+                                        "type": "string",
+                                        "description": "Lead source (e.g. Standard mailer, Google, Texting)"
+                                    },
+                                    "site_county": {
+                                        "type": "string",
+                                        "description": "County where the property is located"
+                                    },
+                                    "site_state": {
+                                        "type": "string",
+                                        "description": "State where the property is located"
+                                    },
+                                    "reference_number": {
+                                        "type": "string",
+                                        "description": "Reference number for the property"
+                                    },
+                                    "acreage": {
+                                        "type": "string",
+                                        "description": "Acreage of the property"
+                                    },
+                                    "stage": {
+                                        "type": "string",
+                                        "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"],
+                                        "description": "Stage to assign the lead"
+                                    }
+                                },
+                                "required": ["caller_name", "caller_phone"]
+                            }
+                        }
+                    ]
+                }
             }
             
-            # Send as a single SSE event with just 'data:' prefix
-            yield f"data: {json.dumps(tools_response)}\n\n"
+            yield f"event: tools\ndata: {json.dumps(tools_response)}\n\n"
             
-            # Keep connection alive with simple heartbeats
+            # Send ready event
+            yield f"event: ready\ndata: {{\"status\": \"ready\", \"tools_count\": 1}}\n\n"
+            
+            logger.info("SSE initial events sent successfully")
+            
+            # Keep connection alive with heartbeats
             counter = 0
             while True:
                 await asyncio.sleep(30)
                 counter += 1
-                # Send empty comment as heartbeat to keep connection alive
-                yield f": heartbeat {counter}\n\n"
+                # Send heartbeat event
+                yield f"event: heartbeat\ndata: {{\"timestamp\": \"{datetime.utcnow().isoformat()}\", \"counter\": {counter}}}\n\n"
                 
-                if counter % 10 == 0:
-                    logger.info(f"SSE connection still alive - heartbeat {counter}")
+                if counter % 2 == 0:
+                    logger.info(f"SSE heartbeat sent - {counter}")
+                    
+                # Don't let the connection run forever - restart after 1 hour
+                if counter > 120:  # 120 * 30 seconds = 1 hour
+                    logger.info("SSE connection reaching time limit - ending gracefully")
+                    break
                     
         except asyncio.CancelledError:
             logger.info("SSE connection cancelled by client")
         except Exception as e:
             logger.error(f"SSE stream error: {e}", exc_info=True)
+            # Send error event if possible
+            try:
+                yield f"event: error\\ndata: {{\\\"error\\\": \\\"Stream error occurred\\\"}}\\n\\n"
+            except:
+                pass
         finally:
             logger.info("SSE connection finished")
     
@@ -729,9 +766,18 @@ async def security_test(request: Request, credentials: HTTPAuthorizationCredenti
         "results": results
     }
 
+def signal_handler(signum, frame):
+    logger.info(f"Received signal {signum} - shutting down gracefully")
+    sys.exit(0)
+
 if __name__ == "__main__":
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     port = int(os.getenv("PORT", 8000))
     try:
+        logger.info(f"Starting server on port {port}")
         uvicorn.run(
             app, 
             host="0.0.0.0", 
