@@ -234,21 +234,31 @@ class SecureMCPServer:
         
         try:
             if method == "initialize":
-                return {
+                # Get the protocol version from the request
+                client_protocol_version = params.get("protocolVersion", "2024-11-05")
+                
+                response = {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}},
+                        "protocolVersion": client_protocol_version,
+                        "capabilities": {
+                            "tools": {}
+                        },
                         "serverInfo": {
                             "name": "secure-followup-boss-mcp",
                             "version": "1.0.0"
                         }
                     }
                 }
+                
+                logger.info(f"Initialize response: {response}")
+                return response
             
             elif method == "tools/list":
-                return {
+                logger.info("Tools/list request received - sending tools response")
+                
+                response = {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
@@ -279,6 +289,9 @@ class SecureMCPServer:
                         ]
                     }
                 }
+                
+                logger.info(f"Tools/list response: {response}")
+                return response
             
             elif method == "tools/call":
                 tool_name = params.get("name")
