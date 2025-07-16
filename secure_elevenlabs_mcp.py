@@ -448,6 +448,37 @@ async def sse_endpoint(request: Request):
             # Send initial connection
             yield f"data: {json.dumps({'type': 'connected', 'server': 'secure-followup-boss-mcp', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
             
+            # Send tools information via SSE for ElevenLabs
+            tools_data = {
+                "type": "tools",
+                "tools": [
+                    {
+                        "name": "log_call",
+                        "description": "Securely log a completed call to FollowUp Boss CRM",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "caller_name": {"type": "string", "maxLength": 100},
+                                "caller_phone": {"type": "string", "pattern": r"^[\+\-\s\(\)\d]{10,}$"},
+                                "transcript": {"type": "string", "maxLength": 5000},
+                                "call_duration": {"type": "integer", "minimum": 0, "maximum": 7200},
+                                "call_outcome": {"type": "string", "maxLength": 50},
+                                "call_summary": {"type": "string", "maxLength": 500},
+                                "source": {"type": "string", "maxLength": 50},
+                                "site_county": {"type": "string", "maxLength": 100},
+                                "site_state": {"type": "string", "maxLength": 50},
+                                "reference_number": {"type": "string", "maxLength": 50},
+                                "acreage": {"type": "string", "maxLength": 50},
+                                "stage": {"type": "string", "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]}
+                            },
+                            "required": ["caller_name", "caller_phone"],
+                            "additionalProperties": False
+                        }
+                    }
+                ]
+            }
+            yield f"data: {json.dumps(tools_data)}\n\n"
+            
             # Keep connection alive with heartbeats
             counter = 0
             while True:
