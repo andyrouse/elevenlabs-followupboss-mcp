@@ -439,7 +439,7 @@ async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(securi
 
 @app.get("/sse")
 @limiter.limit("5/minute")
-async def sse_endpoint(request: Request, credentials: HTTPAuthorizationCredentials = Depends(verify_auth)):
+async def sse_endpoint(request: Request):
     """Secure SSE endpoint"""
     async def event_stream():
         try:
