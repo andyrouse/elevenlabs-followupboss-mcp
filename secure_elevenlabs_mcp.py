@@ -63,6 +63,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Log all requests middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    
+    response = await call_next(request)
+    
+    logger.info(f"Response status: {response.status_code}")
+    return response
+
 # Security
 security = HTTPBearer(auto_error=False)
 
@@ -456,27 +467,55 @@ async def sse_endpoint(request: Request):
         try:
             logger.info("SSE connection established")
             
-            # Send simple connection message first
-            yield f"data: {json.dumps({'status': 'connected'})}\n\n"
+            # Log all request details for debugging
+            logger.info(f"SSE Request Headers: {dict(request.headers)}")
+            logger.info(f"SSE Request URL: {request.url}")
             
-            # Keep connection alive with simple heartbeats
+            # Send initial MCP data that ElevenLabs might be expecting
+            # Based on standard MCP SSE format
+            yield f"event: message\ndata: {json.dumps({'type': 'connection', 'status': 'ready'})}\n\n"
+            
+            # Send capabilities
+            yield f"event: capabilities\ndata: {json.dumps({
+                'type': 'capabilities',
+                'tools': [{
+                    'name': 'log_call',
+                    'description': 'Log a completed call to FollowUp Boss CRM',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {
+                            'caller_name': {'type': 'string'},
+                            'caller_phone': {'type': 'string'},
+                            'transcript': {'type': 'string'},
+                            'call_duration': {'type': 'integer'},
+                            'call_outcome': {'type': 'string'},
+                            'call_summary': {'type': 'string'},
+                            'source': {'type': 'string'},
+                            'site_county': {'type': 'string'},
+                            'site_state': {'type': 'string'},
+                            'reference_number': {'type': 'string'},
+                            'acreage': {'type': 'string'},
+                            'stage': {'type': 'string'}
+                        },
+                        'required': ['caller_name', 'caller_phone']
+                    }
+                }]
+            })}\n\n"
+            
+            # Keep connection alive indefinitely
             counter = 0
             while True:
-                await asyncio.sleep(5)  # Short interval to test stability
+                await asyncio.sleep(30)
                 counter += 1
-                yield f"data: {json.dumps({'heartbeat': counter})}\n\n"
-                logger.info(f"SSE heartbeat {counter}")
+                yield f"event: heartbeat\ndata: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
                 
-                # Exit after 10 heartbeats to prevent infinite loops
-                if counter >= 10:
-                    logger.info("SSE connection completing after 10 heartbeats")
-                    break
+                if counter % 10 == 0:
+                    logger.info(f"SSE connection still alive - heartbeat {counter}")
                     
         except asyncio.CancelledError:
             logger.info("SSE connection cancelled by client")
         except Exception as e:
-            logger.error(f"SSE stream error: {e}")
-            # Don't re-raise to prevent server shutdown
+            logger.error(f"SSE stream error: {e}", exc_info=True)
         finally:
             logger.info("SSE connection finished")
     
