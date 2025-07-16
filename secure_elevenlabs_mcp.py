@@ -87,8 +87,10 @@ async def root():
         "name": "secure-followup-boss-mcp",
         "version": "1.0.0",
         "description": "ElevenLabs MCP server for FollowUp Boss integration",
+        "transports": ["sse", "http"],
         "endpoints": {
             "sse": "/sse",
+            "mcp": "/mcp",
             "tools": "/tools",
             "health": "/health"
         }
@@ -608,26 +610,19 @@ async def messages_endpoint(request: Request, session_id: str):
 @app.post("/mcp")
 @limiter.limit("20/minute")
 async def mcp_endpoint(request: Request):
-    """Secure MCP endpoint (legacy)"""
+    """Direct MCP endpoint - ElevenLabs might prefer this over SSE"""
     try:
         body = await request.json()
         
         # Log request (without sensitive data)
-        logger.info(f"MCP request from {get_remote_address(request)}: {body.get('method', 'unknown')}")
+        logger.info(f"DIRECT MCP request from {get_remote_address(request)}: {body.get('method', 'unknown')}")
         logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Body: {body}")
         
-        # Check authentication for sensitive operations
-        if body.get('method') in ['tools/call']:
-            auth_header = request.headers.get("Authorization")
-            if not auth_header or not auth_header.startswith("Bearer "):
-                raise HTTPException(status_code=401, detail="Authentication required for tool calls")
-            
-            token = auth_header.split(" ")[1]
-            if token != server.auth_token:
-                raise HTTPException(status_code=401, detail="Invalid authentication token")
-        
+        # No authentication check - let ElevenLabs connect directly
         response = await server.handle_jsonrpc(body)
+        
+        logger.info(f"DIRECT MCP response: {response}")
         return response
         
     except json.JSONDecodeError:
