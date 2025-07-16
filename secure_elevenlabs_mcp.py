@@ -505,6 +505,9 @@ async def sse_endpoint(request: Request):
             # Wait a moment for ElevenLabs to process the endpoint
             await asyncio.sleep(0.5)
             
+            # Log that we're waiting for MCP requests
+            logger.info("SSE waiting for MCP JSON-RPC requests...")
+            
             # Keep connection alive with simple ping comments
             counter = 0
             while True:
