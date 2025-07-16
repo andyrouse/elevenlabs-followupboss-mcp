@@ -1,1 +1,1 @@
-web: python secure_elevenlabs_mcp.py
+web: uvicorn secure_elevenlabs_mcp:app --host 0.0.0.0 --port $PORT
