@@ -27,10 +27,11 @@ from prompt_security import validate_call_data, detector
 import signal
 import sys
 
-# Configure logging
+# Configure logging to stderr only (critical for MCP protocol)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stderr  # Force all logs to stderr to avoid stdout contamination
 )
 logger = logging.getLogger("secure_elevenlabs_mcp")
 
@@ -521,20 +522,14 @@ async def sse_endpoint(request: Request):
             endpoint_url = f"/messages/{session_id}"
             endpoint_event = f"event: endpoint\ndata: {endpoint_url}\n\n"
             
-            logger.info(f"SSE sending endpoint event: {repr(endpoint_event)}")
+            logger.info(f"SSE sending endpoint event to session {session_id}")
             yield endpoint_event
             
-            logger.info(f"SSE endpoint event sent successfully: {endpoint_url}")
+            logger.info(f"SSE endpoint event sent successfully for session {session_id}")
             
-            # Wait a moment for ElevenLabs to process the endpoint
-            await asyncio.sleep(0.5)
-            
-            # Log that we're waiting for MCP requests
-            logger.info("SSE waiting for MCP JSON-RPC requests...")
-            
-            # Additional delay to ensure initialize response is processed
+            # Wait for ElevenLabs to process the endpoint and send JSON-RPC requests
             await asyncio.sleep(1.0)
-            logger.info("SSE ready for tools/list request")
+            logger.info(f"SSE ready for JSON-RPC requests on session {session_id}")
             
             # Keep connection alive with simple ping comments
             counter = 0
@@ -770,8 +765,8 @@ if __name__ == "__main__":
             app, 
             host="0.0.0.0", 
             port=port,
-            log_level="info",
-            access_log=True
+            log_level="error",  # Reduce uvicorn logging
+            access_log=False   # Disable access logs that might contaminate stdout
         )
     except Exception as e:
         logger.error(f"Server failed to start: {e}")
