@@ -194,6 +194,38 @@ def validate_call_data(call_data: Dict[str, Any]) -> tuple[bool, str, Dict[str, 
         return False, "Call outcome contains suspicious content", {}
     sanitized_data["call_outcome"] = detector.sanitize_input(call_outcome, 50)
     
+    # Check source
+    source = call_data.get("source", "")
+    if source:
+        is_safe, threats = detector.is_safe_input(source, "source")
+        if not is_safe:
+            return False, "Source contains suspicious content", {}
+        sanitized_data["source"] = detector.sanitize_input(source, 50)
+    
+    # Check site county
+    site_county = call_data.get("site_county", "")
+    if site_county:
+        is_safe, threats = detector.is_safe_input(site_county, "site_county")
+        if not is_safe:
+            return False, "Site county contains suspicious content", {}
+        sanitized_data["site_county"] = detector.sanitize_input(site_county, 100)
+    
+    # Check site state
+    site_state = call_data.get("site_state", "")
+    if site_state:
+        is_safe, threats = detector.is_safe_input(site_state, "site_state")
+        if not is_safe:
+            return False, "Site state contains suspicious content", {}
+        sanitized_data["site_state"] = detector.sanitize_input(site_state, 50)
+    
+    # Check reference number
+    reference_number = call_data.get("reference_number", "")
+    if reference_number:
+        is_safe, threats = detector.is_safe_input(reference_number, "reference_number")
+        if not is_safe:
+            return False, "Reference number contains suspicious content", {}
+        sanitized_data["reference_number"] = detector.sanitize_input(reference_number, 50)
+    
     # Copy safe fields
     sanitized_data["caller_phone"] = call_data.get("caller_phone", "")
     sanitized_data["call_duration"] = call_data.get("call_duration", 0)

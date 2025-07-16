@@ -136,7 +136,11 @@ class SecureMCPServer:
                                         "transcript": {"type": "string", "maxLength": 5000},
                                         "call_duration": {"type": "integer", "minimum": 0, "maximum": 7200},
                                         "call_outcome": {"type": "string", "maxLength": 50},
-                                        "call_summary": {"type": "string", "maxLength": 500}
+                                        "call_summary": {"type": "string", "maxLength": 500},
+                                        "source": {"type": "string", "maxLength": 50},
+                                        "site_county": {"type": "string", "maxLength": 100},
+                                        "site_state": {"type": "string", "maxLength": 50},
+                                        "reference_number": {"type": "string", "maxLength": 50}
                                     },
                                     "required": ["caller_name", "caller_phone"],
                                     "additionalProperties": False
@@ -200,6 +204,10 @@ class SecureMCPServer:
         call_summary = sanitized_data.get("call_summary", "")
         call_outcome = sanitized_data.get("call_outcome", "")
         call_duration = sanitized_data.get("call_duration", 0)
+        source = sanitized_data.get("source", "")
+        site_county = sanitized_data.get("site_county", "")
+        site_state = sanitized_data.get("site_state", "")
+        reference_number = sanitized_data.get("reference_number", "")
         
         # Additional validation
         if not caller_name or len(caller_name) < 2:
@@ -213,18 +221,33 @@ class SecureMCPServer:
         
         client = FollowUpBossClient(self.api_key)
         try:
+            # Build person data with custom fields
+            person_data = {
+                "name": caller_name,
+                "phone": caller_phone,
+                "source": source if source else "ElevenLabs AI Call"
+            }
+            
+            # Add custom fields if provided
+            if site_county:
+                person_data["Site County"] = site_county
+            if site_state:
+                person_data["Site State"] = site_state
+            if reference_number:
+                person_data["Reference Number"] = reference_number
+            
             event_data = {
                 "type": "call",
-                "person": {
-                    "name": caller_name,
-                    "phone": caller_phone,
-                    "source": "ElevenLabs AI Call"
-                },
+                "person": person_data,
                 "note": self._format_secure_call_note({
                     "call_duration": call_duration,
                     "call_outcome": call_outcome,
                     "call_summary": call_summary,
-                    "transcript": transcript
+                    "transcript": transcript,
+                    "source": source,
+                    "site_county": site_county,
+                    "site_state": site_state,
+                    "reference_number": reference_number
                 }),
                 "source": "ElevenLabs"
             }
@@ -252,6 +275,21 @@ class SecureMCPServer:
         
         if args.get("call_outcome"):
             note_parts.append(f"Outcome: {args['call_outcome']}")
+        
+        if args.get("source"):
+            note_parts.append(f"Source: {args['source']}")
+        
+        # Add location information
+        location_parts = []
+        if args.get("site_county"):
+            location_parts.append(f"County: {args['site_county']}")
+        if args.get("site_state"):
+            location_parts.append(f"State: {args['site_state']}")
+        if location_parts:
+            note_parts.append(f"Location: {', '.join(location_parts)}")
+        
+        if args.get("reference_number"):
+            note_parts.append(f"Reference #: {args['reference_number']}")
         
         if args.get("call_summary"):
             note_parts.append(f"Summary: {args['call_summary']}")
