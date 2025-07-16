@@ -440,54 +440,67 @@ async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(securi
 @app.get("/sse")
 @limiter.limit("5/minute")
 async def sse_endpoint(request: Request):
-    """SSE endpoint for ElevenLabs MCP"""
+    """SSE endpoint for ElevenLabs MCP - Standard MCP over SSE"""
     async def event_stream():
         try:
             logger.info("SSE connection established")
             
-            # Send initial connection
-            yield f"data: {json.dumps({'type': 'connected', 'server': 'secure-followup-boss-mcp', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
-            
-            # Send tools information via SSE for ElevenLabs
-            tools_data = {
-                "type": "tools",
-                "tools": [
-                    {
-                        "name": "log_call",
-                        "description": "Securely log a completed call to FollowUp Boss CRM",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "caller_name": {"type": "string", "maxLength": 100},
-                                "caller_phone": {"type": "string", "pattern": r"^[\+\-\s\(\)\d]{10,}$"},
-                                "transcript": {"type": "string", "maxLength": 5000},
-                                "call_duration": {"type": "integer", "minimum": 0, "maximum": 7200},
-                                "call_outcome": {"type": "string", "maxLength": 50},
-                                "call_summary": {"type": "string", "maxLength": 500},
-                                "source": {"type": "string", "maxLength": 50},
-                                "site_county": {"type": "string", "maxLength": 100},
-                                "site_state": {"type": "string", "maxLength": 50},
-                                "reference_number": {"type": "string", "maxLength": 50},
-                                "acreage": {"type": "string", "maxLength": 50},
-                                "stage": {"type": "string", "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]}
-                            },
-                            "required": ["caller_name", "caller_phone"],
-                            "additionalProperties": False
-                        }
+            # Standard MCP initialization over SSE
+            init_response = {
+                "jsonrpc": "2.0",
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {
+                        "name": "followup-boss-mcp",
+                        "version": "1.0.0"
                     }
-                ]
+                }
             }
-            yield f"data: {json.dumps(tools_data)}\n\n"
+            yield f"data: {json.dumps(init_response)}\n\n"
+            
+            # Standard MCP tools list over SSE
+            tools_response = {
+                "jsonrpc": "2.0",
+                "result": {
+                    "tools": [
+                        {
+                            "name": "log_call",
+                            "description": "Securely log a completed call to FollowUp Boss CRM",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "caller_name": {"type": "string", "maxLength": 100},
+                                    "caller_phone": {"type": "string", "pattern": r"^[\+\-\s\(\)\d]{10,}$"},
+                                    "transcript": {"type": "string", "maxLength": 5000},
+                                    "call_duration": {"type": "integer", "minimum": 0, "maximum": 7200},
+                                    "call_outcome": {"type": "string", "maxLength": 50},
+                                    "call_summary": {"type": "string", "maxLength": 500},
+                                    "source": {"type": "string", "maxLength": 50},
+                                    "site_county": {"type": "string", "maxLength": 100},
+                                    "site_state": {"type": "string", "maxLength": 50},
+                                    "reference_number": {"type": "string", "maxLength": 50},
+                                    "acreage": {"type": "string", "maxLength": 50},
+                                    "stage": {"type": "string", "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]}
+                                },
+                                "required": ["caller_name", "caller_phone"],
+                                "additionalProperties": False
+                            }
+                        }
+                    ]
+                }
+            }
+            yield f"data: {json.dumps(tools_response)}\n\n"
             
             # Keep connection alive with heartbeats
             counter = 0
             while True:
-                await asyncio.sleep(10)  # More frequent heartbeats
+                await asyncio.sleep(30)  # Standard heartbeat interval
                 counter += 1
-                yield f"data: {json.dumps({'type': 'heartbeat', 'counter': counter, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                yield f"data: {json.dumps({'type': 'heartbeat', 'counter': counter})}\n\n"
                 
                 # Log periodically to track connection
-                if counter % 6 == 0:  # Every minute
+                if counter % 2 == 0:  # Every 2 heartbeats
                     logger.info(f"SSE connection alive - heartbeat {counter}")
                     
         except asyncio.CancelledError:
@@ -505,7 +518,7 @@ async def sse_endpoint(request: Request):
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         }
     )
 
