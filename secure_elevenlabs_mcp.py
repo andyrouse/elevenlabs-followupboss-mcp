@@ -23,6 +23,8 @@ from slowapi.errors import RateLimitExceeded
 import httpx
 from fubmcp import FollowUpBossClient
 from prompt_security import validate_call_data, detector
+import signal
+import sys
 
 # Configure logging
 logging.basicConfig(
@@ -42,6 +44,15 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Global exception handler to prevent server shutdown
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc)}
+    )
 
 # CORS - restrict in production
 app.add_middleware(
@@ -445,70 +456,29 @@ async def sse_endpoint(request: Request):
         try:
             logger.info("SSE connection established")
             
-            # Standard MCP initialization over SSE
-            init_response = {
-                "jsonrpc": "2.0",
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {
-                        "name": "followup-boss-mcp",
-                        "version": "1.0.0"
-                    }
-                }
-            }
-            yield f"data: {json.dumps(init_response)}\n\n"
+            # Send simple connection message first
+            yield f"data: {json.dumps({'status': 'connected'})}\n\n"
             
-            # Standard MCP tools list over SSE
-            tools_response = {
-                "jsonrpc": "2.0",
-                "result": {
-                    "tools": [
-                        {
-                            "name": "log_call",
-                            "description": "Securely log a completed call to FollowUp Boss CRM",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "caller_name": {"type": "string", "maxLength": 100},
-                                    "caller_phone": {"type": "string", "pattern": r"^[\+\-\s\(\)\d]{10,}$"},
-                                    "transcript": {"type": "string", "maxLength": 5000},
-                                    "call_duration": {"type": "integer", "minimum": 0, "maximum": 7200},
-                                    "call_outcome": {"type": "string", "maxLength": 50},
-                                    "call_summary": {"type": "string", "maxLength": 500},
-                                    "source": {"type": "string", "maxLength": 50},
-                                    "site_county": {"type": "string", "maxLength": 100},
-                                    "site_state": {"type": "string", "maxLength": 50},
-                                    "reference_number": {"type": "string", "maxLength": 50},
-                                    "acreage": {"type": "string", "maxLength": 50},
-                                    "stage": {"type": "string", "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]}
-                                },
-                                "required": ["caller_name", "caller_phone"],
-                                "additionalProperties": False
-                            }
-                        }
-                    ]
-                }
-            }
-            yield f"data: {json.dumps(tools_response)}\n\n"
-            
-            # Keep connection alive with heartbeats
+            # Keep connection alive with simple heartbeats
             counter = 0
             while True:
-                await asyncio.sleep(30)  # Standard heartbeat interval
+                await asyncio.sleep(5)  # Short interval to test stability
                 counter += 1
-                yield f"data: {json.dumps({'type': 'heartbeat', 'counter': counter})}\n\n"
+                yield f"data: {json.dumps({'heartbeat': counter})}\n\n"
+                logger.info(f"SSE heartbeat {counter}")
                 
-                # Log periodically to track connection
-                if counter % 2 == 0:  # Every 2 heartbeats
-                    logger.info(f"SSE connection alive - heartbeat {counter}")
+                # Exit after 10 heartbeats to prevent infinite loops
+                if counter >= 10:
+                    logger.info("SSE connection completing after 10 heartbeats")
+                    break
                     
         except asyncio.CancelledError:
             logger.info("SSE connection cancelled by client")
-            raise
         except Exception as e:
             logger.error(f"SSE stream error: {e}")
-            raise
+            # Don't re-raise to prevent server shutdown
+        finally:
+            logger.info("SSE connection finished")
     
     return StreamingResponse(
         event_stream(),
