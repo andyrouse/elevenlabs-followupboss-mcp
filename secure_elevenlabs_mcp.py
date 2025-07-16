@@ -73,9 +73,6 @@ async def log_requests(request: Request, call_next):
     # Special logging for messages endpoint
     if request.url.path.startswith("/messages/"):
         logger.info(f"MESSAGES ENDPOINT HIT: {request.method} {request.url.path}")
-        if request.method == "POST":
-            body = await request.body()
-            logger.info(f"MESSAGES BODY: {body.decode() if body else 'No body'}")
     
     response = await call_next(request)
     
@@ -496,25 +493,17 @@ async def sse_endpoint(request: Request):
             logger.info(f"SSE Request URL: {request.url}")
             
             # Send endpoint event as required by MCP SSE spec
-            # Try both relative and absolute URLs
-            base_url = str(request.url).replace('/sse', '')
-            endpoint_url_relative = f"/messages/{session_id}"
-            endpoint_url_absolute = f"{base_url}/messages/{session_id}"
+            # Use relative URL as per MCP specification
+            endpoint_url = f"/messages/{session_id}"
+            endpoint_event = f"event: endpoint\ndata: {endpoint_url}\n\n"
             
-            # Send relative URL first
-            endpoint_event = f"event: endpoint\ndata: {endpoint_url_relative}\n\n"
-            logger.info(f"SSE sending endpoint event (relative): {repr(endpoint_event)}")
+            logger.info(f"SSE sending endpoint event: {repr(endpoint_event)}")
             yield endpoint_event
             
-            # Also try absolute URL
-            endpoint_event_abs = f"event: endpoint\ndata: {endpoint_url_absolute}\n\n"
-            logger.info(f"SSE sending endpoint event (absolute): {repr(endpoint_event_abs)}")
-            yield endpoint_event_abs
+            logger.info(f"SSE endpoint event sent successfully: {endpoint_url}")
             
-            # Send a simple data event to test if ElevenLabs is receiving anything
-            test_event = f"data: {{\"test\": \"connection_ready\", \"session_id\": \"{session_id}\", \"endpoints\": [\"{endpoint_url_relative}\", \"{endpoint_url_absolute}\"]}}\n\n"
-            logger.info(f"SSE sending test event: {repr(test_event)}")
-            yield test_event
+            # Wait a moment for ElevenLabs to process the endpoint
+            await asyncio.sleep(0.5)
             
             # Keep connection alive with simple ping comments
             counter = 0
