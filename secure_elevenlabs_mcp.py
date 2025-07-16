@@ -10,6 +10,7 @@ import logging
 import re
 import hmac
 import hashlib
+import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import uvicorn
@@ -477,120 +478,32 @@ async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(securi
 @limiter.limit("5/minute")
 async def sse_endpoint(request: Request):
     """SSE endpoint for ElevenLabs MCP - Standard MCP over SSE"""
+    session_id = str(uuid.uuid4())
+    
     async def event_stream():
         try:
-            logger.info("SSE connection established")
+            logger.info(f"SSE connection established with session {session_id}")
             
             # Log all request details for debugging
             logger.info(f"SSE Request Headers: {dict(request.headers)}")
             logger.info(f"SSE Request URL: {request.url}")
             
-            # Send initial connection event
-            yield f"event: connected\ndata: {{\"status\": \"ready\"}}\n\n"
+            # Send endpoint event as required by MCP SSE spec
+            endpoint_url = f"/messages/{session_id}"
+            yield f"event: endpoint\ndata: {endpoint_url}\n\n"
             
-            # Send MCP initialization response
-            init_response = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "secure-followup-boss-mcp",
-                        "version": "1.0.0"
-                    }
-                }
-            }
-            yield f"event: initialize\ndata: {json.dumps(init_response)}\n\n"
+            logger.info(f"SSE endpoint event sent: {endpoint_url}")
             
-            # Send tools list
-            tools_response = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "log_call",
-                            "description": "Log a completed call to FollowUp Boss CRM",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "caller_name": {
-                                        "type": "string",
-                                        "description": "Name of the caller"
-                                    },
-                                    "caller_phone": {
-                                        "type": "string",
-                                        "description": "Phone number of the caller"
-                                    },
-                                    "transcript": {
-                                        "type": "string",
-                                        "description": "Full transcript of the call"
-                                    },
-                                    "call_duration": {
-                                        "type": "integer",
-                                        "description": "Duration of call in seconds"
-                                    },
-                                    "call_outcome": {
-                                        "type": "string",
-                                        "description": "Outcome of the call"
-                                    },
-                                    "call_summary": {
-                                        "type": "string",
-                                        "description": "Brief summary of the call"
-                                    },
-                                    "source": {
-                                        "type": "string",
-                                        "description": "Lead source (e.g. Standard mailer, Google, Texting)"
-                                    },
-                                    "site_county": {
-                                        "type": "string",
-                                        "description": "County where the property is located"
-                                    },
-                                    "site_state": {
-                                        "type": "string",
-                                        "description": "State where the property is located"
-                                    },
-                                    "reference_number": {
-                                        "type": "string",
-                                        "description": "Reference number for the property"
-                                    },
-                                    "acreage": {
-                                        "type": "string",
-                                        "description": "Acreage of the property"
-                                    },
-                                    "stage": {
-                                        "type": "string",
-                                        "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"],
-                                        "description": "Stage to assign the lead"
-                                    }
-                                },
-                                "required": ["caller_name", "caller_phone"]
-                            }
-                        }
-                    ]
-                }
-            }
-            
-            yield f"event: tools\ndata: {json.dumps(tools_response)}\n\n"
-            
-            # Send ready event
-            yield f"event: ready\ndata: {{\"status\": \"ready\", \"tools_count\": 1}}\n\n"
-            
-            logger.info("SSE initial events sent successfully")
-            
-            # Keep connection alive with heartbeats
+            # Keep connection alive with simple ping comments
             counter = 0
             while True:
                 await asyncio.sleep(30)
                 counter += 1
-                # Send heartbeat event
-                yield f"event: heartbeat\ndata: {{\"timestamp\": \"{datetime.utcnow().isoformat()}\", \"counter\": {counter}}}\n\n"
+                # Send simple ping as comment
+                yield f": ping - {datetime.utcnow().isoformat()}\n\n"
                 
                 if counter % 2 == 0:
-                    logger.info(f"SSE heartbeat sent - {counter}")
+                    logger.info(f"SSE ping sent - {counter}")
                     
                 # Don't let the connection run forever - restart after 1 hour
                 if counter > 120:  # 120 * 30 seconds = 1 hour
@@ -621,10 +534,42 @@ async def sse_endpoint(request: Request):
         }
     )
 
+@app.post("/messages/{session_id}")
+@limiter.limit("20/minute")
+async def messages_endpoint(request: Request, session_id: str):
+    """MCP messages endpoint for SSE sessions"""
+    try:
+        body = await request.json()
+        
+        # Log request (without sensitive data)
+        logger.info(f"MCP message from session {session_id}: {body.get('method', 'unknown')}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Body: {body}")
+        
+        # Check authentication for sensitive operations
+        if body.get('method') in ['tools/call']:
+            auth_header = request.headers.get("Authorization")
+            if not auth_header or not auth_header.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Authentication required for tool calls")
+            
+            token = auth_header.split(" ")[1]
+            if token != server.auth_token:
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+        
+        response = await server.handle_jsonrpc(body)
+        return response
+        
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON received")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    except Exception as e:
+        logger.error(f"MCP messages endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @app.post("/mcp")
 @limiter.limit("20/minute")
 async def mcp_endpoint(request: Request):
-    """Secure MCP endpoint"""
+    """Secure MCP endpoint (legacy)"""
     try:
         body = await request.json()
         
@@ -664,6 +609,7 @@ async def health(request: Request):
         "security": "prompt_injection_protection_enabled",
         "endpoints": {
             "sse": "/sse",
+            "messages": "/messages/{session_id}",
             "mcp": "/mcp", 
             "health": "/health",
             "tools": "/tools"
