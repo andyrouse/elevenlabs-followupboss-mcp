@@ -226,6 +226,14 @@ def validate_call_data(call_data: Dict[str, Any]) -> tuple[bool, str, Dict[str, 
             return False, "Reference number contains suspicious content", {}
         sanitized_data["reference_number"] = detector.sanitize_input(reference_number, 50)
     
+    # Check acreage
+    acreage = call_data.get("acreage", "")
+    if acreage:
+        is_safe, threats = detector.is_safe_input(acreage, "acreage")
+        if not is_safe:
+            return False, "Acreage contains suspicious content", {}
+        sanitized_data["acreage"] = detector.sanitize_input(acreage, 50)
+    
     # Check stage
     stage = call_data.get("stage", "")
     if stage:

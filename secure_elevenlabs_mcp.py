@@ -60,6 +60,7 @@ class SecureMCPServer:
         self.api_key = os.getenv("FOLLOWUP_BOSS_API_KEY")
         self.webhook_secret = os.getenv("ELEVENLABS_WEBHOOK_SECRET")
         self.auth_token = os.getenv("MCP_AUTH_TOKEN")
+        self.discord_webhook = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1395067571644141608/JQiYYbcFkh4UkpWLDS5CRYUVmC-PMy_mfgsm_4bXbpM4wRDW6v4KTabUtvXKzlgyw6fg")
         
         if not self.api_key:
             raise ValueError("FOLLOWUP_BOSS_API_KEY environment variable required")
@@ -121,6 +122,62 @@ class SecureMCPServer:
         # Default assignment
         return self.agent_assignments["default"]
     
+    async def send_discord_notification(self, lead_data: Dict[str, Any]) -> None:
+        """Send Discord notification for new lead"""
+        try:
+            # Extract lead information
+            caller_name = lead_data.get("caller_name", "Unknown")
+            site_county = lead_data.get("site_county", "Unknown")
+            site_state = lead_data.get("site_state", "Unknown")
+            acreage = lead_data.get("acreage", "Unknown")
+            source = lead_data.get("source", "Unknown")
+            stage = lead_data.get("stage", "Unknown")
+            assigned_agent = lead_data.get("assigned_agent", "Unknown")
+            person_id = lead_data.get("person_id", "")
+            
+            # Create FollowUp Boss link
+            followup_boss_link = f"https://app.followupboss.com/2/people/{person_id}" if person_id else "https://app.followupboss.com/2/people"
+            
+            # Create Discord embed
+            embed = {
+                "title": "🎯 New Lead Added!",
+                "description": f"**{caller_name}** has been added to FollowUp Boss",
+                "color": 0x00ff00,  # Green color
+                "fields": [
+                    {"name": "📍 Location", "value": f"{site_county}, {site_state}", "inline": True},
+                    {"name": "🏞️ Acreage", "value": acreage if acreage != "Unknown" else "Not specified", "inline": True},
+                    {"name": "📱 Source", "value": source, "inline": True},
+                    {"name": "🏷️ Stage", "value": stage, "inline": True},
+                    {"name": "👤 Assigned Agent", "value": assigned_agent, "inline": True},
+                    {"name": "🔗 FollowUp Boss", "value": f"[View Lead]({followup_boss_link})", "inline": True}
+                ],
+                "timestamp": datetime.utcnow().isoformat(),
+                "footer": {"text": "ElevenLabs MCP Integration"}
+            }
+            
+            # Note: We don't have acreage data currently, but can add it if available
+            
+            discord_payload = {
+                "content": "@everyone",
+                "embeds": [embed]
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.discord_webhook,
+                    json=discord_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 204:
+                    logger.info(f"Discord notification sent for lead: {caller_name}")
+                else:
+                    logger.error(f"Discord notification failed: {response.status_code} - {response.text}")
+                    
+        except Exception as e:
+            logger.error(f"Error sending Discord notification: {e}")
+            # Don't fail the main process if Discord fails
+    
     def validate_phone(self, phone: str) -> bool:
         """Validate phone number format"""
         if not phone:
@@ -171,6 +228,7 @@ class SecureMCPServer:
                                         "site_county": {"type": "string", "maxLength": 100},
                                         "site_state": {"type": "string", "maxLength": 50},
                                         "reference_number": {"type": "string", "maxLength": 50},
+                                        "acreage": {"type": "string", "maxLength": 50},
                                         "stage": {"type": "string", "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]}
                                     },
                                     "required": ["caller_name", "caller_phone"],
@@ -239,6 +297,7 @@ class SecureMCPServer:
         site_county = sanitized_data.get("site_county", "")
         site_state = sanitized_data.get("site_state", "")
         reference_number = sanitized_data.get("reference_number", "")
+        acreage = sanitized_data.get("acreage", "")
         stage = sanitized_data.get("stage", "Qualify")
         
         # Additional validation
@@ -272,6 +331,8 @@ class SecureMCPServer:
                 person_data["Site State"] = site_state
             if reference_number:
                 person_data["Reference Number"] = reference_number
+            if acreage:
+                person_data["Acreage"] = acreage
             
             event_data = {
                 "type": "call",
@@ -294,7 +355,26 @@ class SecureMCPServer:
             result = await client.create_event(event_data)
             event_id = result.get("event", {}).get("id", "unknown")
             
+            # Get person ID from result for Discord link
+            person_id = result.get("event", {}).get("person", {}).get("id", "")
+            
             logger.info(f"Call logged successfully for {caller_name} (Event ID: {event_id})")
+            
+            # Send Discord notification
+            discord_data = {
+                "caller_name": caller_name,
+                "site_county": site_county,
+                "site_state": site_state,
+                "acreage": acreage,
+                "source": source,
+                "stage": stage,
+                "assigned_agent": assigned_agent["name"],
+                "person_id": person_id
+            }
+            
+            # Send notification in background (don't wait for it)
+            asyncio.create_task(self.send_discord_notification(discord_data))
+            
             return f"✅ Call logged successfully (Event ID: {event_id})"
             
         except Exception as e:
