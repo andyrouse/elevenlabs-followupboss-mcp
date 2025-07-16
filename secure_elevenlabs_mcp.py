@@ -469,6 +469,8 @@ async def mcp_endpoint(request: Request):
         
         # Log request (without sensitive data)
         logger.info(f"MCP request from {get_remote_address(request)}: {body.get('method', 'unknown')}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Body: {body}")
         
         # Check authentication for sensitive operations
         if body.get('method') in ['tools/call']:
