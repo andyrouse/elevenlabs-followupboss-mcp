@@ -235,11 +235,8 @@ class SecureMCPServer:
         
         try:
             if method == "initialize":
-                # Get the protocol version from the request, but use a known stable version
+                # MUST match the exact protocol version that ElevenLabs sends
                 client_protocol_version = params.get("protocolVersion", "2024-11-05")
-                # Use the stable 2024-11-05 version for better compatibility
-                if client_protocol_version == "2025-03-26":
-                    client_protocol_version = "2024-11-05"
                 
                 response = {
                     "jsonrpc": "2.0",
@@ -594,6 +591,11 @@ async def messages_endpoint(request: Request, session_id: str):
                 raise HTTPException(status_code=401, detail="Invalid authentication token")
         
         response = await server.handle_jsonrpc(body)
+        
+        # If this was an initialize request, immediately send tools info
+        if body.get('method') == 'initialize':
+            logger.info("Sending tools info immediately after initialize")
+        
         return response
         
     except json.JSONDecodeError:
