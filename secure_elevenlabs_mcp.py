@@ -440,16 +440,31 @@ async def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(securi
 @app.get("/sse")
 @limiter.limit("5/minute")
 async def sse_endpoint(request: Request):
-    """Secure SSE endpoint"""
+    """SSE endpoint for ElevenLabs MCP"""
     async def event_stream():
         try:
+            logger.info("SSE connection established")
+            
+            # Send initial connection
             yield f"data: {json.dumps({'type': 'connected', 'server': 'secure-followup-boss-mcp', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
             
+            # Keep connection alive with heartbeats
+            counter = 0
             while True:
-                await asyncio.sleep(30)
-                yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                await asyncio.sleep(10)  # More frequent heartbeats
+                counter += 1
+                yield f"data: {json.dumps({'type': 'heartbeat', 'counter': counter, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                
+                # Log periodically to track connection
+                if counter % 6 == 0:  # Every minute
+                    logger.info(f"SSE connection alive - heartbeat {counter}")
+                    
+        except asyncio.CancelledError:
+            logger.info("SSE connection cancelled by client")
+            raise
         except Exception as e:
             logger.error(f"SSE stream error: {e}")
+            raise
     
     return StreamingResponse(
         event_stream(),
@@ -457,6 +472,9 @@ async def sse_endpoint(request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
         }
     )
 
@@ -500,7 +518,12 @@ async def health(request: Request):
         "status": "healthy",
         "service": "secure-elevenlabs-followupboss-mcp",
         "timestamp": datetime.utcnow().isoformat(),
-        "security": "prompt_injection_protection_enabled"
+        "security": "prompt_injection_protection_enabled",
+        "endpoints": {
+            "sse": "/sse",
+            "mcp": "/mcp", 
+            "health": "/health"
+        }
     }
 
 @app.get("/security/test")
@@ -532,4 +555,14 @@ async def security_test(request: Request, credentials: HTTPAuthorizationCredenti
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    try:
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=port,
+            log_level="info",
+            access_log=True
+        )
+    except Exception as e:
+        logger.error(f"Server failed to start: {e}")
+        raise
