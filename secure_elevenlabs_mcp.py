@@ -65,6 +65,23 @@ class SecureMCPServer:
             raise ValueError("FOLLOWUP_BOSS_API_KEY environment variable required")
         if not self.auth_token:
             raise ValueError("MCP_AUTH_TOKEN environment variable required")
+        
+        # Agent assignment mapping
+        self.agent_assignments = {
+            # Sources
+            "Standard mailer": {"id": 8, "name": "Sloan Edgeton"},
+            "Google": {"id": 9, "name": "Steve Johnson"},
+            "Texting": {"id": 9, "name": "Steve Johnson"},
+            "Cold Email": {"id": 9, "name": "Steve Johnson"},
+            
+            # Stages
+            "DNC": {"id": 3, "name": "Riggs Garcia"},
+            "Realtor/Wholesaler": {"id": 1, "name": "Andy Rouse"},
+            "Seller not interested": {"id": 1, "name": "Andy Rouse"},
+            
+            # Default
+            "default": {"id": 9, "name": "Steve Johnson"}
+        }
             
         logger.info("Secure MCP Server initialized")
     
@@ -90,6 +107,19 @@ class SecureMCPServer:
         # Remove potentially dangerous characters and limit length
         sanitized = re.sub(r'[<>"\'\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
         return sanitized[:max_length].strip()
+    
+    def get_assigned_agent(self, source: str, stage: str) -> Dict[str, Any]:
+        """Determine the correct agent based on source and stage"""
+        # Stage-based assignments take priority
+        if stage in self.agent_assignments:
+            return self.agent_assignments[stage]
+        
+        # Source-based assignments
+        if source in self.agent_assignments:
+            return self.agent_assignments[source]
+        
+        # Default assignment
+        return self.agent_assignments["default"]
     
     def validate_phone(self, phone: str) -> bool:
         """Validate phone number format"""
@@ -140,7 +170,8 @@ class SecureMCPServer:
                                         "source": {"type": "string", "maxLength": 50},
                                         "site_county": {"type": "string", "maxLength": 100},
                                         "site_state": {"type": "string", "maxLength": 50},
-                                        "reference_number": {"type": "string", "maxLength": 50}
+                                        "reference_number": {"type": "string", "maxLength": 50},
+                                        "stage": {"type": "string", "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]}
                                     },
                                     "required": ["caller_name", "caller_phone"],
                                     "additionalProperties": False
@@ -208,6 +239,7 @@ class SecureMCPServer:
         site_county = sanitized_data.get("site_county", "")
         site_state = sanitized_data.get("site_state", "")
         reference_number = sanitized_data.get("reference_number", "")
+        stage = sanitized_data.get("stage", "Qualify")
         
         # Additional validation
         if not caller_name or len(caller_name) < 2:
@@ -221,11 +253,16 @@ class SecureMCPServer:
         
         client = FollowUpBossClient(self.api_key)
         try:
+            # Determine assigned agent based on source and stage
+            assigned_agent = self.get_assigned_agent(source, stage)
+            
             # Build person data with custom fields
             person_data = {
                 "name": caller_name,
                 "phone": caller_phone,
-                "source": source if source else "ElevenLabs AI Call"
+                "source": source if source else "ElevenLabs AI Call",
+                "stage": stage,
+                "assignedTo": assigned_agent["name"]
             }
             
             # Add custom fields if provided
@@ -247,7 +284,9 @@ class SecureMCPServer:
                     "source": source,
                     "site_county": site_county,
                     "site_state": site_state,
-                    "reference_number": reference_number
+                    "reference_number": reference_number,
+                    "stage": stage,
+                    "assigned_agent": assigned_agent["name"]
                 }),
                 "source": "ElevenLabs"
             }
@@ -290,6 +329,12 @@ class SecureMCPServer:
         
         if args.get("reference_number"):
             note_parts.append(f"Reference #: {args['reference_number']}")
+        
+        if args.get("stage"):
+            note_parts.append(f"Stage: {args['stage']}")
+        
+        if args.get("assigned_agent"):
+            note_parts.append(f"Assigned to: {args['assigned_agent']}")
         
         if args.get("call_summary"):
             note_parts.append(f"Summary: {args['call_summary']}")

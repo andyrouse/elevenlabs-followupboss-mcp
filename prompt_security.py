@@ -226,6 +226,14 @@ def validate_call_data(call_data: Dict[str, Any]) -> tuple[bool, str, Dict[str, 
             return False, "Reference number contains suspicious content", {}
         sanitized_data["reference_number"] = detector.sanitize_input(reference_number, 50)
     
+    # Check stage
+    stage = call_data.get("stage", "")
+    if stage:
+        valid_stages = ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"]
+        if stage not in valid_stages:
+            return False, f"Invalid stage. Must be one of: {', '.join(valid_stages)}", {}
+        sanitized_data["stage"] = stage
+    
     # Copy safe fields
     sanitized_data["caller_phone"] = call_data.get("caller_phone", "")
     sanitized_data["call_duration"] = call_data.get("call_duration", 0)
