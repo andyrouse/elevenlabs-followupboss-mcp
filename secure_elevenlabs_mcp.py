@@ -234,8 +234,11 @@ class SecureMCPServer:
         
         try:
             if method == "initialize":
-                # Get the protocol version from the request
+                # Get the protocol version from the request, but use a known stable version
                 client_protocol_version = params.get("protocolVersion", "2024-11-05")
+                # Use the stable 2024-11-05 version for better compatibility
+                if client_protocol_version == "2025-03-26":
+                    client_protocol_version = "2024-11-05"
                 
                 response = {
                     "jsonrpc": "2.0",
@@ -295,6 +298,11 @@ class SecureMCPServer:
                 
                 logger.info(f"Tools/list response: {response}")
                 return response
+            
+            elif method == "notifications/initialized":
+                logger.info("Client sent initialized notification")
+                # No response needed for notifications
+                return {"jsonrpc": "2.0", "id": request_id, "result": {}}
             
             elif method == "tools/call":
                 tool_name = params.get("name")
@@ -523,6 +531,10 @@ async def sse_endpoint(request: Request):
             
             # Log that we're waiting for MCP requests
             logger.info("SSE waiting for MCP JSON-RPC requests...")
+            
+            # Additional delay to ensure initialize response is processed
+            await asyncio.sleep(1.0)
+            logger.info("SSE ready for tools/list request")
             
             # Keep connection alive with simple ping comments
             counter = 0
