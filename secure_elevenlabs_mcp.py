@@ -243,7 +243,10 @@ class SecureMCPServer:
                     "result": {
                         "protocolVersion": client_protocol_version,
                         "capabilities": {
-                            "tools": {}
+                            "tools": {
+                                "listChanged": True
+                            },
+                            "logging": {}
                         },
                         "serverInfo": {
                             "name": "secure-followup-boss-mcp",
