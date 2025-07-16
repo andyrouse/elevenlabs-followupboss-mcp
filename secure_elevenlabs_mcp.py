@@ -74,6 +74,20 @@ async def log_requests(request: Request, call_next):
     logger.info(f"Response status: {response.status_code}")
     return response
 
+@app.get("/")
+async def root():
+    """Root endpoint with server info"""
+    return {
+        "name": "secure-followup-boss-mcp",
+        "version": "1.0.0",
+        "description": "ElevenLabs MCP server for FollowUp Boss integration",
+        "endpoints": {
+            "sse": "/sse",
+            "tools": "/tools",
+            "health": "/health"
+        }
+    }
+
 # Security
 security = HTTPBearer(auto_error=False)
 
@@ -471,43 +485,82 @@ async def sse_endpoint(request: Request):
             logger.info(f"SSE Request Headers: {dict(request.headers)}")
             logger.info(f"SSE Request URL: {request.url}")
             
-            # Send initial MCP data that ElevenLabs might be expecting
-            # Based on standard MCP SSE format
-            yield f"event: message\ndata: {json.dumps({'type': 'connection', 'status': 'ready'})}\n\n"
-            
-            # Send capabilities
-            yield f"event: capabilities\ndata: {json.dumps({
-                'type': 'capabilities',
-                'tools': [{
-                    'name': 'log_call',
-                    'description': 'Log a completed call to FollowUp Boss CRM',
-                    'parameters': {
-                        'type': 'object',
-                        'properties': {
-                            'caller_name': {'type': 'string'},
-                            'caller_phone': {'type': 'string'},
-                            'transcript': {'type': 'string'},
-                            'call_duration': {'type': 'integer'},
-                            'call_outcome': {'type': 'string'},
-                            'call_summary': {'type': 'string'},
-                            'source': {'type': 'string'},
-                            'site_county': {'type': 'string'},
-                            'site_state': {'type': 'string'},
-                            'reference_number': {'type': 'string'},
-                            'acreage': {'type': 'string'},
-                            'stage': {'type': 'string'}
-                        },
-                        'required': ['caller_name', 'caller_phone']
+            # Send MCP tools list in the exact format expected
+            # Try a simpler format that might match what ElevenLabs expects
+            tools_response = {
+                "tools": [
+                    {
+                        "name": "log_call",
+                        "description": "Log a completed call to FollowUp Boss CRM",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "caller_name": {
+                                    "type": "string",
+                                    "description": "Name of the caller"
+                                },
+                                "caller_phone": {
+                                    "type": "string", 
+                                    "description": "Phone number of the caller"
+                                },
+                                "transcript": {
+                                    "type": "string",
+                                    "description": "Full transcript of the call"
+                                },
+                                "call_duration": {
+                                    "type": "integer",
+                                    "description": "Duration of call in seconds"
+                                },
+                                "call_outcome": {
+                                    "type": "string",
+                                    "description": "Outcome of the call"
+                                },
+                                "call_summary": {
+                                    "type": "string",
+                                    "description": "Brief summary of the call"
+                                },
+                                "source": {
+                                    "type": "string",
+                                    "description": "Lead source (e.g. Standard mailer, Google, Texting)"
+                                },
+                                "site_county": {
+                                    "type": "string",
+                                    "description": "County where the property is located"
+                                },
+                                "site_state": {
+                                    "type": "string",
+                                    "description": "State where the property is located"
+                                },
+                                "reference_number": {
+                                    "type": "string",
+                                    "description": "Reference number for the property"
+                                },
+                                "acreage": {
+                                    "type": "string",
+                                    "description": "Acreage of the property"
+                                },
+                                "stage": {
+                                    "type": "string",
+                                    "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"],
+                                    "description": "Stage to assign the lead"
+                                }
+                            },
+                            "required": ["caller_name", "caller_phone"]
+                        }
                     }
-                }]
-            })}\n\n"
+                ]
+            }
             
-            # Keep connection alive indefinitely
+            # Send as a single SSE event with just 'data:' prefix
+            yield f"data: {json.dumps(tools_response)}\n\n"
+            
+            # Keep connection alive with simple heartbeats
             counter = 0
             while True:
                 await asyncio.sleep(30)
                 counter += 1
-                yield f"event: heartbeat\ndata: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                # Send empty comment as heartbeat to keep connection alive
+                yield f": heartbeat {counter}\n\n"
                 
                 if counter % 10 == 0:
                     logger.info(f"SSE connection still alive - heartbeat {counter}")
@@ -575,8 +628,78 @@ async def health(request: Request):
         "endpoints": {
             "sse": "/sse",
             "mcp": "/mcp", 
-            "health": "/health"
+            "health": "/health",
+            "tools": "/tools"
         }
+    }
+
+@app.get("/tools")
+@limiter.limit("10/minute")
+async def tools_endpoint(request: Request):
+    """Direct tools endpoint for ElevenLabs"""
+    logger.info(f"Tools endpoint accessed from {get_remote_address(request)}")
+    return {
+        "tools": [
+            {
+                "name": "log_call",
+                "description": "Log a completed call to FollowUp Boss CRM",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "caller_name": {
+                            "type": "string",
+                            "description": "Name of the caller"
+                        },
+                        "caller_phone": {
+                            "type": "string",
+                            "description": "Phone number of the caller"
+                        },
+                        "transcript": {
+                            "type": "string",
+                            "description": "Full transcript of the call"
+                        },
+                        "call_duration": {
+                            "type": "integer",
+                            "description": "Duration of call in seconds"
+                        },
+                        "call_outcome": {
+                            "type": "string",
+                            "description": "Outcome of the call"
+                        },
+                        "call_summary": {
+                            "type": "string",
+                            "description": "Brief summary of the call"
+                        },
+                        "source": {
+                            "type": "string",
+                            "description": "Lead source (e.g. Standard mailer, Google, Texting)"
+                        },
+                        "site_county": {
+                            "type": "string",
+                            "description": "County where the property is located"
+                        },
+                        "site_state": {
+                            "type": "string",
+                            "description": "State where the property is located"  
+                        },
+                        "reference_number": {
+                            "type": "string",
+                            "description": "Reference number for the property"
+                        },
+                        "acreage": {
+                            "type": "string",
+                            "description": "Acreage of the property"
+                        },
+                        "stage": {
+                            "type": "string",
+                            "enum": ["Qualify", "Realtor/Wholesaler", "Seller not interested", "DNC"],
+                            "description": "Stage to assign the lead"
+                        }
+                    },
+                    "required": ["caller_name", "caller_phone"]
+                }
+            }
+        ]
     }
 
 @app.get("/security/test")
