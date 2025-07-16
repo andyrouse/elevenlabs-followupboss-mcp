@@ -462,16 +462,23 @@ async def sse_endpoint(request: Request):
 
 @app.post("/mcp")
 @limiter.limit("20/minute")
-async def mcp_endpoint(
-    request: Request, 
-    credentials: HTTPAuthorizationCredentials = Depends(verify_auth)
-):
+async def mcp_endpoint(request: Request):
     """Secure MCP endpoint"""
     try:
         body = await request.json()
         
         # Log request (without sensitive data)
         logger.info(f"MCP request from {get_remote_address(request)}: {body.get('method', 'unknown')}")
+        
+        # Check authentication for sensitive operations
+        if body.get('method') in ['tools/call']:
+            auth_header = request.headers.get("Authorization")
+            if not auth_header or not auth_header.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Authentication required for tool calls")
+            
+            token = auth_header.split(" ")[1]
+            if token != server.auth_token:
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
         
         response = await server.handle_jsonrpc(body)
         return response
