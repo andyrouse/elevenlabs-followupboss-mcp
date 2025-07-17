@@ -896,6 +896,9 @@ async def handle_elevenlabs_webhook(request: Request):
             time_in_call = entry.get("time_in_call_secs", "")
             transcript_text += f"[{time_in_call}s] {role.upper()}: {message}\n\n"
         
+        logger.info(f"🔍 DEBUG - Transcript length: {len(transcript_text)}")
+        logger.info(f"🔍 DEBUG - Transcript preview: {transcript_text[:300] if transcript_text else 'No transcript'}...")
+        
         # Get call metadata
         call_duration = metadata.get("call_duration_secs", 0)
         call_cost = (metadata.get("cost", 0) or 0) / 100  # Handle None cost
@@ -923,6 +926,54 @@ async def handle_elevenlabs_webhook(request: Request):
             detected_source = "ElevenLabs AI Call"  # Default for AI calls
         
         logger.info(f"🔍 Detected source: {detected_source}")
+        
+        # Extract property information from transcript
+        extracted_county = ""
+        extracted_state = ""
+        extracted_acreage = ""
+        extracted_reference = ""
+        
+        # Look for property details in conversation
+        full_conversation = " ".join([entry.get("message", "") for entry in transcript])
+        
+        # Extract county (look for "in [county] county" or "[county] county")
+        import re
+        county_patterns = [
+            r"(?i)in ([a-z]+) county",
+            r"(?i)([a-z]+) county",
+            r"(?i)county of ([a-z]+)"
+        ]
+        for pattern in county_patterns:
+            match = re.search(pattern, full_conversation)
+            if match:
+                extracted_county = match.group(1).title()
+                break
+        
+        # Extract state (look for state names or abbreviations)
+        state_patterns = [
+            r"(?i)\b(texas|tx|california|ca|florida|fl|new york|ny|illinois|il|pennsylvania|pa|ohio|oh|michigan|mi|georgia|ga|north carolina|nc|new jersey|nj)\b"
+        ]
+        for pattern in state_patterns:
+            match = re.search(pattern, full_conversation)
+            if match:
+                state = match.group(1).upper()
+                # Convert to abbreviation if needed
+                state_map = {"TEXAS": "TX", "CALIFORNIA": "CA", "FLORIDA": "FL"}
+                extracted_state = state_map.get(state, state)
+                break
+        
+        # Extract acreage
+        acreage_patterns = [
+            r"(?i)(\d+(?:\.\d+)?)\s*acres?",
+            r"(?i)(\d+(?:\.\d+)?)\s*ac\b"
+        ]
+        for pattern in acreage_patterns:
+            match = re.search(pattern, full_conversation)
+            if match:
+                extracted_acreage = f"{match.group(1)} acres"
+                break
+        
+        logger.info(f"🔍 Extracted property info - County: {extracted_county}, State: {extracted_state}, Acreage: {extracted_acreage}")
             
         # Use the existing _log_call_secure method
         call_args = {
@@ -933,10 +984,10 @@ async def handle_elevenlabs_webhook(request: Request):
             "call_summary": (summary or "")[:500],  # Limit to 500 chars
             "call_outcome": analysis.get("call_successful", "completed"),
             "source": detected_source,
-            "site_county": dynamic_vars.get("site_county", ""),
-            "site_state": dynamic_vars.get("site_state", ""),
-            "reference_number": dynamic_vars.get("reference_number", ""),
-            "acreage": dynamic_vars.get("acreage", ""),
+            "site_county": extracted_county or dynamic_vars.get("site_county", ""),
+            "site_state": extracted_state or dynamic_vars.get("site_state", ""),
+            "reference_number": extracted_reference or dynamic_vars.get("reference_number", ""),
+            "acreage": extracted_acreage or dynamic_vars.get("acreage", ""),
             "stage": "Qualify"  # Default stage
         }
         
@@ -947,6 +998,8 @@ async def handle_elevenlabs_webhook(request: Request):
             
             # Format the note
             note = server._format_secure_call_note(call_args)
+            logger.info(f"🔍 DEBUG - Formatted note length: {len(note) if note else 0}")
+            logger.info(f"🔍 DEBUG - Note preview: {note[:200] if note else 'No note'}...")
             
             # Split name into first/last for FollowUp Boss
             name_parts = call_args["caller_name"].split()
