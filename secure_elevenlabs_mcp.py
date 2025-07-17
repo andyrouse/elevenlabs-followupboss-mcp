@@ -912,15 +912,15 @@ async def handle_elevenlabs_webhook(request: Request):
         conversation_text = " ".join([entry.get("message", "") for entry in transcript if entry.get("role") == "user"][:3])  # First 3 user messages
         
         if any(phrase in conversation_text.lower() for phrase in ["got a text", "received a text", "text message", "texted me", "text from"]):
-            detected_source = "Text Message"
+            detected_source = "Texting"
         elif any(phrase in conversation_text.lower() for phrase in ["got an email", "received an email", "email from", "emailed me"]):
-            detected_source = "Email"
-        elif any(phrase in conversation_text.lower() for phrase in ["saw your ad", "saw the ad", "advertisement", "marketing"]):
-            detected_source = "Advertisement"
-        elif any(phrase in conversation_text.lower() for phrase in ["website", "online", "internet", "googled"]):
-            detected_source = "Website"
+            detected_source = "Cold Email"
+        elif any(phrase in conversation_text.lower() for phrase in ["saw your ad", "saw the ad", "advertisement", "marketing", "mailer", "postcard"]):
+            detected_source = "Standard mailer"
+        elif any(phrase in conversation_text.lower() for phrase in ["website", "online", "internet", "googled", "google", "searched"]):
+            detected_source = "Google"
         else:
-            detected_source = "Phone Call"  # Default for AI calls
+            detected_source = "ElevenLabs AI Call"  # Default for AI calls
         
         logger.info(f"🔍 Detected source: {detected_source}")
             
