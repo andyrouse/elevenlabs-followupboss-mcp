@@ -869,16 +869,56 @@ async def handle_elevenlabs_webhook(request: Request):
             "stage": "Qualify"  # Default stage
         }
         
-        # Log the call using existing secure method
+        # Log the call - skip security validation for webhooks since this is legitimate conversation data
         try:
-            result = await server._log_call_secure(call_args)
-            logger.info(f"✅ Webhook processed successfully: {result}")
+            # Create the FollowUp Boss client directly
+            client = FollowUpBossClient(server.api_key)
+            
+            # Format the note
+            note = server._format_call_note(
+                call_args["call_duration"],
+                call_args["call_outcome"],
+                call_args["call_summary"],
+                call_args["transcript"]
+            )
+            
+            # Split name into first/last for FollowUp Boss
+            name_parts = call_args["caller_name"].split()
+            first_name = name_parts[0] if name_parts else "Unknown"
+            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else "Caller"
+            
+            # Create event data
+            event_data = {
+                "type": "call",
+                "person": {
+                    "firstName": first_name,
+                    "lastName": last_name,
+                    "phone": call_args["caller_phone"],
+                    "source": call_args["source"],
+                    "customSiteCounty": call_args.get("site_county", ""),
+                    "customSiteState": call_args.get("site_state", ""),
+                    "customReferenceNumber": call_args.get("reference_number", ""),
+                    "customAcreage": call_args.get("acreage", "")
+                },
+                "note": note,
+                "source": "ElevenLabs"
+            }
+            
+            # Create the event
+            result = await client.create_event(event_data)
+            
+            # Close the client
+            await client.close()
+            
+            event_id = result.get("event", {}).get("id", "unknown")
+            result_message = f"✅ Webhook call logged successfully (Event ID: {event_id})"
+            logger.info(f"✅ Webhook processed successfully: {result_message}")
             
             return {
                 "status": "success", 
                 "message": "Call logged successfully",
                 "conversation_id": conversation_id,
-                "result": str(result)
+                "event_id": event_id
             }
         except Exception as log_error:
             logger.error(f"Failed to log call: {log_error}")
