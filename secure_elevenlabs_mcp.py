@@ -875,12 +875,7 @@ async def handle_elevenlabs_webhook(request: Request):
             client = FollowUpBossClient(server.api_key)
             
             # Format the note
-            note = server._format_call_note(
-                call_args["call_duration"],
-                call_args["call_outcome"],
-                call_args["call_summary"],
-                call_args["transcript"]
-            )
+            note = server._format_secure_call_note(call_args)
             
             # Split name into first/last for FollowUp Boss
             name_parts = call_args["caller_name"].split()
