@@ -307,6 +307,7 @@ class SecureMCPServer:
             elif method == "tools/call":
                 tool_name = params.get("name")
                 arguments = params.get("arguments", {})
+                logger.info(f"🔧 TOOL CALL RECEIVED: {tool_name} with args: {arguments}")
                 
                 if tool_name == "log_call":
                     result = await self._log_call_secure(arguments)
@@ -749,6 +750,145 @@ async def security_test(request: Request, credentials: HTTPAuthorizationCredenti
 def signal_handler(signum, frame):
     logger.info(f"Received signal {signum} - shutting down gracefully")
     sys.exit(0)
+
+# Webhook endpoint for ElevenLabs post-call processing
+@app.post("/webhook/elevenlabs")
+async def handle_elevenlabs_webhook(request: Request):
+    """Handle ElevenLabs post-call webhook"""
+    try:
+        # Get raw payload for signature verification
+        payload = await request.body()
+        try:
+            webhook_data = json.loads(payload.decode('utf-8'))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.error(f"Failed to parse webhook payload: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        logger.info(f"📞 Received ElevenLabs webhook: conversation_id={webhook_data.get('data', {}).get('conversation_id', 'unknown')}")
+        
+        # Check webhook type
+        webhook_type = webhook_data.get("type", "")
+        if webhook_type != "post_call_transcription":
+            logger.info(f"Ignoring webhook type: {webhook_type}")
+            return {"status": "ignored", "reason": "Not a post-call transcription webhook"}
+        
+        # Verify webhook signature if secret is configured
+        webhook_secret = server.webhook_secret
+        elevenlabs_signature = request.headers.get("elevenlabs-signature")
+        
+        if webhook_secret and elevenlabs_signature:
+            # Parse signature header: "t=timestamp,v0=signature"
+            try:
+                parts = elevenlabs_signature.split(',')
+                if len(parts) != 2:
+                    raise ValueError("Invalid signature format")
+                
+                timestamp_part, signature_part = parts
+                if not timestamp_part.startswith('t=') or not signature_part.startswith('v0='):
+                    raise ValueError("Invalid signature format")
+                    
+                timestamp = timestamp_part[2:]  # Remove 't='
+                signature = signature_part[3:]  # Remove 'v0='
+                
+                # Create expected signature  
+                message = f"{timestamp}.{payload.decode('utf-8')}"
+                expected_signature = hmac.new(
+                    webhook_secret.encode(),
+                    message.encode(),
+                    hashlib.sha256
+                ).hexdigest()
+                
+                if not hmac.compare_digest(signature, expected_signature):
+                    logger.error("Invalid webhook signature")
+                    raise HTTPException(status_code=401, detail="Invalid signature")
+                    
+            except Exception as e:
+                logger.error(f"Signature verification failed: {e}")
+                raise HTTPException(status_code=401, detail="Invalid signature format")
+        
+        # Extract data from ElevenLabs webhook payload
+        data = webhook_data.get("data", {})
+        transcript = data.get("transcript", [])
+        metadata = data.get("metadata", {})
+        analysis = data.get("analysis", {})
+        dynamic_vars = data.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
+        
+        # Extract caller info
+        caller_name = dynamic_vars.get("user_name", "Unknown Caller")
+        caller_phone = dynamic_vars.get("user_phone", "Unknown")
+        
+        # Ensure we have valid strings
+        if not caller_name or not isinstance(caller_name, str):
+            caller_name = "Unknown Caller"
+        if not caller_phone or not isinstance(caller_phone, str):
+            caller_phone = "Unknown"
+        
+        # Parse transcript for additional info if needed
+        if caller_phone == "Unknown":
+            for entry in transcript:
+                if entry.get("role") == "user":
+                    message = entry.get("message", "")
+                    phone_match = re.search(r"\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b", message)
+                    if phone_match:
+                        caller_phone = phone_match.group()
+                        break
+        
+        # Build transcript text
+        transcript_text = ""
+        for entry in transcript:
+            role = entry.get("role", "unknown")
+            message = entry.get("message", "")
+            time_in_call = entry.get("time_in_call_secs", "")
+            transcript_text += f"[{time_in_call}s] {role.upper()}: {message}\n\n"
+        
+        # Get call metadata
+        call_duration = metadata.get("call_duration_secs", 0)
+        call_cost = (metadata.get("cost", 0) or 0) / 100  # Handle None cost
+        conversation_id = data.get("conversation_id", "Unknown")
+        summary = analysis.get("transcript_summary", "No summary available")
+        
+        # Ensure we have minimum required data
+        if not caller_name or caller_name == "Unknown Caller":
+            logger.warning("No valid caller name found in webhook")
+        if not caller_phone or caller_phone == "Unknown":
+            logger.warning("No valid caller phone found in webhook")
+            
+        # Use the existing _log_call_secure method
+        call_args = {
+            "caller_name": caller_name,
+            "caller_phone": caller_phone,
+            "transcript": transcript_text[:5000] if transcript_text else "",  # Limit to 5000 chars
+            "call_duration": call_duration,
+            "call_summary": (summary or "")[:500],  # Limit to 500 chars
+            "call_outcome": analysis.get("call_successful", "completed"),
+            "source": "ElevenLabs Webhook",
+            "site_county": dynamic_vars.get("site_county", ""),
+            "site_state": dynamic_vars.get("site_state", ""),
+            "reference_number": dynamic_vars.get("reference_number", ""),
+            "acreage": dynamic_vars.get("acreage", ""),
+            "stage": "Qualify"  # Default stage
+        }
+        
+        # Log the call using existing secure method
+        try:
+            result = await server._log_call_secure(call_args)
+            logger.info(f"✅ Webhook processed successfully: {result}")
+            
+            return {
+                "status": "success", 
+                "message": "Call logged successfully",
+                "conversation_id": conversation_id,
+                "result": str(result)
+            }
+        except Exception as log_error:
+            logger.error(f"Failed to log call: {log_error}")
+            raise HTTPException(status_code=500, detail=f"Failed to log call: {str(log_error)}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Webhook processing error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
     # Set up signal handlers
