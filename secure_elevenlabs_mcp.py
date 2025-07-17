@@ -864,21 +864,23 @@ async def handle_elevenlabs_webhook(request: Request):
                             caller_phone = phone_match.group()
                             logger.info(f"🔍 Found phone in transcript: {caller_phone}")
                     
-                    # Extract name patterns
+                    # Extract name patterns (more specific)
                     if caller_name == "Unknown Caller":
                         name_patterns = [
-                            r"(?i)my name is ([a-z\s]+)",
-                            r"(?i)this is ([a-z\s]+)",
-                            r"(?i)i'm ([a-z\s]+)",
-                            r"(?i)i am ([a-z\s]+)",
-                            r"(?i)name's ([a-z\s]+)",
-                            r"(?i)it's ([a-z\s]+) calling"
+                            r"(?i)my name is ([a-z]{2,}(?:\s+[a-z]{2,})?)",  # "my name is John" or "my name is John Smith"
+                            r"(?i)this is ([a-z]{2,}(?:\s+[a-z]{2,})?)(?:\s+calling|\s+speaking|$|\.)",  # "this is John calling"
+                            r"(?i)i'm ([a-z]{2,}(?:\s+[a-z]{2,})?)(?:\s+calling|\s+speaking|$|\.)",  # "I'm John calling"
+                            r"(?i)name's ([a-z]{2,}(?:\s+[a-z]{2,})?)",  # "name's John"
+                            r"(?i)it's ([a-z]{2,}(?:\s+[a-z]{2,})?) calling",  # "it's John calling"
+                            r"(?i)hi,?\s+(?:this is\s+)?([a-z]{2,}(?:\s+[a-z]{2,})?)$"  # "Hi, John" or "Hi, this is John"
                         ]
                         for pattern in name_patterns:
                             name_match = re.search(pattern, message)
                             if name_match:
                                 extracted_name = name_match.group(1).strip().title()
-                                if len(extracted_name) > 1:  # Avoid single letters
+                                # Validate it's actually a name (not phrases like "Calling About")
+                                if (len(extracted_name.split()) <= 3 and 
+                                    not any(word in extracted_name.lower() for word in ['calling', 'about', 'got', 'text', 'from', 'think', 'here', 'speaking'])):
                                     caller_name = extracted_name
                                     logger.info(f"🔍 Found name in transcript: {caller_name}")
                                     break
@@ -905,6 +907,22 @@ async def handle_elevenlabs_webhook(request: Request):
             logger.warning("No valid caller name found in webhook")
         if not caller_phone or caller_phone == "Unknown":
             logger.warning("No valid caller phone found in webhook")
+        
+        # Detect source from conversation context
+        conversation_text = " ".join([entry.get("message", "") for entry in transcript if entry.get("role") == "user"][:3])  # First 3 user messages
+        
+        if any(phrase in conversation_text.lower() for phrase in ["got a text", "received a text", "text message", "texted me", "text from"]):
+            detected_source = "Text Message"
+        elif any(phrase in conversation_text.lower() for phrase in ["got an email", "received an email", "email from", "emailed me"]):
+            detected_source = "Email"
+        elif any(phrase in conversation_text.lower() for phrase in ["saw your ad", "saw the ad", "advertisement", "marketing"]):
+            detected_source = "Advertisement"
+        elif any(phrase in conversation_text.lower() for phrase in ["website", "online", "internet", "googled"]):
+            detected_source = "Website"
+        else:
+            detected_source = "Phone Call"  # Default for AI calls
+        
+        logger.info(f"🔍 Detected source: {detected_source}")
             
         # Use the existing _log_call_secure method
         call_args = {
@@ -914,7 +932,7 @@ async def handle_elevenlabs_webhook(request: Request):
             "call_duration": call_duration,
             "call_summary": (summary or "")[:500],  # Limit to 500 chars
             "call_outcome": analysis.get("call_successful", "completed"),
-            "source": "ElevenLabs Webhook",
+            "source": detected_source,
             "site_county": dynamic_vars.get("site_county", ""),
             "site_state": dynamic_vars.get("site_state", ""),
             "reference_number": dynamic_vars.get("reference_number", ""),
@@ -942,7 +960,7 @@ async def handle_elevenlabs_webhook(request: Request):
                     "firstName": first_name,
                     "lastName": last_name,
                     "phone": call_args["caller_phone"],
-                    "source": call_args["source"],
+                    "source": detected_source,
                     "customSiteCounty": call_args.get("site_county", ""),
                     "customSiteState": call_args.get("site_state", ""),
                     "customReferenceNumber": call_args.get("reference_number", ""),
