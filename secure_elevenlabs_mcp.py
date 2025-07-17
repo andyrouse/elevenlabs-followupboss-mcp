@@ -766,6 +766,16 @@ async def handle_elevenlabs_webhook(request: Request):
         
         logger.info(f"📞 Received ElevenLabs webhook: conversation_id={webhook_data.get('data', {}).get('conversation_id', 'unknown')}")
         
+        # Debug: Log webhook structure for analysis
+        data = webhook_data.get("data", {})
+        dynamic_vars = data.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
+        transcript = data.get("transcript", [])
+        
+        logger.info(f"🔍 DEBUG - Dynamic variables: {dynamic_vars}")
+        logger.info(f"🔍 DEBUG - Transcript entries: {len(transcript)}")
+        if transcript:
+            logger.info(f"🔍 DEBUG - First user message: {[entry for entry in transcript if entry.get('role') == 'user'][:1]}")
+        
         # Check webhook type
         webhook_type = webhook_data.get("type", "")
         if webhook_type != "post_call_transcription":
@@ -813,9 +823,27 @@ async def handle_elevenlabs_webhook(request: Request):
         analysis = data.get("analysis", {})
         dynamic_vars = data.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
         
-        # Extract caller info
-        caller_name = dynamic_vars.get("user_name", "Unknown Caller")
-        caller_phone = dynamic_vars.get("user_phone", "Unknown")
+        # Extract caller info from dynamic variables
+        caller_name = dynamic_vars.get("user_name", None)
+        caller_phone = dynamic_vars.get("user_phone", None)
+        
+        # Try other possible phone fields
+        if not caller_phone:
+            caller_phone = dynamic_vars.get("phone", None)
+            caller_phone = caller_phone or dynamic_vars.get("caller_phone", None)
+            caller_phone = caller_phone or dynamic_vars.get("phone_number", None)
+        
+        # Try other possible name fields  
+        if not caller_name:
+            caller_name = dynamic_vars.get("name", None)
+            caller_name = caller_name or dynamic_vars.get("caller_name", None)
+            caller_name = caller_name or dynamic_vars.get("customer_name", None)
+        
+        # Set defaults if still not found
+        if not caller_name:
+            caller_name = "Unknown Caller"
+        if not caller_phone:
+            caller_phone = "Unknown"
         
         # Ensure we have valid strings
         if not caller_name or not isinstance(caller_name, str):
@@ -824,13 +852,38 @@ async def handle_elevenlabs_webhook(request: Request):
             caller_phone = "Unknown"
         
         # Parse transcript for additional info if needed
-        if caller_phone == "Unknown":
+        if caller_phone == "Unknown" or caller_name == "Unknown Caller":
             for entry in transcript:
                 if entry.get("role") == "user":
                     message = entry.get("message", "")
-                    phone_match = re.search(r"\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b", message)
-                    if phone_match:
-                        caller_phone = phone_match.group()
+                    
+                    # Extract phone number
+                    if caller_phone == "Unknown":
+                        phone_match = re.search(r"\b(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b", message)
+                        if phone_match:
+                            caller_phone = phone_match.group()
+                            logger.info(f"🔍 Found phone in transcript: {caller_phone}")
+                    
+                    # Extract name patterns
+                    if caller_name == "Unknown Caller":
+                        name_patterns = [
+                            r"(?i)my name is ([a-z\s]+)",
+                            r"(?i)this is ([a-z\s]+)",
+                            r"(?i)i'm ([a-z\s]+)",
+                            r"(?i)i am ([a-z\s]+)",
+                            r"(?i)name's ([a-z\s]+)",
+                            r"(?i)it's ([a-z\s]+) calling"
+                        ]
+                        for pattern in name_patterns:
+                            name_match = re.search(pattern, message)
+                            if name_match:
+                                extracted_name = name_match.group(1).strip().title()
+                                if len(extracted_name) > 1:  # Avoid single letters
+                                    caller_name = extracted_name
+                                    logger.info(f"🔍 Found name in transcript: {caller_name}")
+                                    break
+                    
+                    if caller_phone != "Unknown" and caller_name != "Unknown Caller":
                         break
         
         # Build transcript text
